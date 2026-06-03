@@ -1,0 +1,14 @@
+*
+
+!.gitignore
+!README.md
+!requirements.txt
+!src/
+!src/**
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.spec
