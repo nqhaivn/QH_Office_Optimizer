@@ -15,3 +15,9 @@ $env:PYTHONPATH='src'
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 ```
+
+## Đóng gói EXE
+
+```powershell
+.\.venv\Scripts\pyinstaller --noconfirm --clean --onedir --noconsole --name QH_Office_Optimizer --icon src\qh_office_optimizer\icon.ico --paths src --add-data "src\qh_office_optimizer\icon.ico;qh_office_optimizer" --contents-directory resource --distpath releases --workpath build\pyinstaller src\qh_office_optimizer\__main__.py
+```

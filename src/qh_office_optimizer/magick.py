@@ -6,6 +6,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,12 @@ def application_dir() -> Path:
 
 def _candidate_names() -> list[str]:
     return ["magick.exe", "magick"] if os.name == "nt" else ["magick"]
+
+
+def hidden_subprocess_kwargs() -> dict[str, Any]:
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
 
 
 def find_magick(app_dir: Path | None = None) -> Path | None:
@@ -59,6 +66,7 @@ def validate_magick(path: Path | None) -> MagickStatus:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=10,
+            **hidden_subprocess_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return MagickStatus(path=path, valid=False)

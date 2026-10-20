@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from qh_office_optimizer import constants
-from qh_office_optimizer.file_rules import iter_valid_office_files
+from qh_office_optimizer.file_rules import file_identity_key, iter_valid_office_file_records
 from qh_office_optimizer.formatting import format_size, parse_image_size_label
 from qh_office_optimizer.magick import find_and_validate_magick
 from qh_office_optimizer.models import FileItem, OptimizationConfig, OutputMode
@@ -130,6 +130,18 @@ class HelpDialog(QDialog):
         layout.addWidget(text)
 
 
+class FileScanWorker(QThread):
+    files_scanned = Signal(list)
+
+    def __init__(self, paths: list[Path], excluded_keys: set[str]) -> None:
+        super().__init__()
+        self.paths = list(paths)
+        self.excluded_keys = set(excluded_keys)
+
+    def run(self) -> None:
+        self.files_scanned.emit(iter_valid_office_file_records(self.paths, self.excluded_keys))
+
+
 class OptimizerWorker(QThread):
     log_message = Signal(str)
     file_updated = Signal(str, int)
@@ -171,6 +183,7 @@ class MainWindow(QMainWindow):
 
         self.file_items: dict[str, FileItem] = {}
         self.worker: OptimizerWorker | None = None
+        self.file_scan_worker: FileScanWorker | None = None
         self.has_completed_run = False
         self.close_after_worker = False
 
@@ -252,23 +265,40 @@ class MainWindow(QMainWindow):
     def add_dropped_paths(self, paths: list[Path]) -> None:
         if self.worker and self.worker.isRunning():
             return
-        new_files = iter_valid_office_files(paths)
-        if not new_files:
+        if self.file_scan_worker and self.file_scan_worker.isRunning():
+            return
+        self.table.setFileDropEnabled(False)
+        self.optimize_button.setEnabled(False)
+        self.file_scan_worker = FileScanWorker(paths, set(self.file_items))
+        self.file_scan_worker.files_scanned.connect(self.on_files_scanned)
+        self.file_scan_worker.finished.connect(self.on_file_scan_finished)
+        self.file_scan_worker.start()
+
+    def on_files_scanned(self, records: list[tuple[Path, int]]) -> None:
+        self._add_scanned_file_records(records)
+
+    def on_file_scan_finished(self) -> None:
+        self.file_scan_worker = None
+        if not (self.worker and self.worker.isRunning()):
+            self.table.setFileDropEnabled(True)
+        self.update_optimize_button()
+
+    def _add_scanned_file_records(self, records: list[tuple[Path, int]]) -> None:
+        if not records:
             return
         added_file = False
         self.table.setSortingEnabled(False)
-        for path in new_files:
-            key = str(path).lower()
+        self.table.setUpdatesEnabled(False)
+        for path, size in records:
+            key = file_identity_key(path)
             if key in self.file_items:
-                continue
-            try:
-                size = path.stat().st_size
-            except OSError:
                 continue
             item = FileItem(path=path, old_size=size)
             self.file_items[key] = item
-            self._append_file_row(item)
+            self._append_file_row(item, resize=False)
             added_file = True
+        self.table.resizeRowsToContents()
+        self.table.setUpdatesEnabled(True)
         self.table.setSortingEnabled(True)
         if added_file:
             self.has_completed_run = False
@@ -281,7 +311,7 @@ class MainWindow(QMainWindow):
             self.has_completed_run = False
         self.update_optimize_button()
 
-    def _append_file_row(self, item: FileItem) -> None:
+    def _append_file_row(self, item: FileItem, resize: bool = True) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
 
@@ -295,10 +325,13 @@ class MainWindow(QMainWindow):
         self.table.setItem(row, 0, path_item)
         self.table.setItem(row, 1, old_size_item)
         self.table.setItem(row, 2, new_size_item)
-        self.table.resizeRowToContents(row)
+        if resize:
+            self.table.resizeRowToContents(row)
 
     def show_table_menu(self, position) -> None:
-        if self.worker and self.worker.isRunning():
+        if (self.worker and self.worker.isRunning()) or (
+            self.file_scan_worker and self.file_scan_worker.isRunning()
+        ):
             return
         selected_rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
         if not selected_rows:
@@ -314,7 +347,7 @@ class MainWindow(QMainWindow):
         for row in rows:
             item = self.table.item(row, 0)
             if item:
-                self.file_items.pop(item.text().lower(), None)
+                self.file_items.pop(file_identity_key(Path(item.text())), None)
             self.table.removeRow(row)
         self.table.setSortingEnabled(True)
         self.update_optimize_button()
@@ -327,7 +360,10 @@ class MainWindow(QMainWindow):
             return
         self.optimize_button.setText("Tối ưu")
         self.optimize_button.setEnabled(
-            bool(self.file_items) and self.magick_status.valid and not self.has_completed_run
+            bool(self.file_items)
+            and self.magick_status.valid
+            and not self.has_completed_run
+            and not (self.file_scan_worker and self.file_scan_worker.isRunning())
         )
 
     def on_optimize_clicked(self) -> None:
@@ -359,13 +395,13 @@ class MainWindow(QMainWindow):
         self.table.setFileDropEnabled(not running)
 
     def update_file_size(self, path_text: str, new_size: int) -> None:
-        key = path_text.lower()
+        key = file_identity_key(Path(path_text))
         existing = self.file_items.get(key)
         if existing:
             self.file_items[key] = FileItem(existing.path, existing.old_size, new_size)
         for row in range(self.table.rowCount()):
             path_item = self.table.item(row, 0)
-            if path_item and path_item.text().lower() == key:
+            if path_item and file_identity_key(Path(path_item.text())) == key:
                 self.table.setItem(row, 2, SizeItem(format_size(new_size), new_size))
                 self.table.resizeRowToContents(row)
                 break

@@ -9,6 +9,7 @@ from typing import Callable
 
 from qh_office_optimizer import constants
 from qh_office_optimizer.formatting import format_size
+from qh_office_optimizer.magick import hidden_subprocess_kwargs
 from qh_office_optimizer.models import FileOptimizationResult, OptimizationConfig
 from qh_office_optimizer.office_package import (
     JPEG_EXTENSIONS,
@@ -256,6 +257,7 @@ def _run_magick(magick_path: Path, input_path: Path, output_path: Path, max_edge
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=120,
+            **hidden_subprocess_kwargs(),
         )
     except OSError as exc:
         raise MagickLaunchError(str(exc)) from exc
